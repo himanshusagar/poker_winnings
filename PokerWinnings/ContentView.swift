@@ -2,67 +2,74 @@ import SwiftUI
 
 struct Player: Identifiable {
     let id = UUID()
-    var initialBuyIn: Int
+    var name: String
+    var initialBuyIn: Int = 2000
     var finalScore: Int
 }
 
 struct SplitwiseEntry: Identifiable {
     let id = UUID()
-    let payer: Int
-    let payee: Int
-    let amount: Double
+    var payer: String
+    var amountPaid: Double
+    var amountOwed: Double
 }
 
 struct ContentView: View {
-    @State private var chipToDollarRate = ""
-    @State private var players: [Player] = [Player(initialBuyIn: 0, finalScore: 0)]
-    @State private var results: [Double] = []
-    @State private var splitwiseEntries: [SplitwiseEntry] = []
+    @State private var chipToDollarRate: Double = 400.0 // Dollar value per chip
+    @State private var players: [Player] = [Player(name: "Player 1", finalScore: 0)]
+    @State private var firstEntry: SplitwiseEntry?
+    @State private var secondEntriesList: [SplitwiseEntry] = []
     
     var body: some View {
         NavigationView {
-            VStack {
-                Form {
-                    Section(header: Text("Game Settings")) {
-                        TextField("Chips per $1", text: $chipToDollarRate)
-                            .keyboardType(.decimalPad)
+            Form {
+                Section(header: Text("Chip Value")) {
+                    TextField("Chips per $1", value: $chipToDollarRate, format: .number)
+                        .keyboardType(.decimalPad)
+                }
+                
+                Section(header: Text("Players")) {
+                    ForEach($players) { $player in
+                        VStack(alignment: .leading) {
+                            TextField("Final Score", value: $player.finalScore, format: .number)
+                                .keyboardType(.numberPad)
+                            TextField("Name", text: $player.name)
+                            TextField("Initial Buy-In", value: $player.initialBuyIn, format: .number)
+                                .keyboardType(.numberPad)
+                        }
+                        .padding(.bottom)
                     }
                     
-                    Section(header: Text("Players")) {
-                        ForEach($players) { $player in
-                            VStack(alignment: .leading) {
-                                TextField("Initial Buy-In (chips)", value: $player.initialBuyIn, format: .number)
-                                    .keyboardType(.numberPad)
-                                TextField("Final Score (chips)", value: $player.finalScore, format: .number)
-                                    .keyboardType(.numberPad)
-                            }
-                            .padding(.bottom)
-                        }
-                        
-                        Button("Add Player") {
-                            players.append(Player(initialBuyIn: 0, finalScore: 0))
+                    Button("Add Player") {
+                        let playerNumber = players.count + 1
+                        players.append(Player(name: "Player \(playerNumber)", finalScore: 0))
+                    }
+                }
+                
+                Section {
+                    Button("Calculate Splitwise Entries") {
+                        calculateSplitwiseEntries()
+                    }
+                }
+                
+                if let firstEntry = firstEntry {
+                    Section(header: Text("First Splitwise Entry")) {
+                        Text("\(firstEntry.payer) paid: $\(String(format: "%.2f", firstEntry.amountPaid))")
+                        ForEach(players) { player in
+                            Text("\(player.name): owes $\(String(format: "%.2f", Double(player.initialBuyIn) / chipToDollarRate))")
                         }
                     }
                     
-                    Section {
-                        Button("Calculate Winnings") {
-                            calculateWinnings()
-                            calculateSplitwiseEntries()
-                        }
-                    }
-                    
-                    if !results.isEmpty {
-                        Section(header: Text("Results")) {
-                            ForEach(results.indices, id: \.self) { index in
-                                Text("Player \(index + 1): $\(String(format: "%.2f", results[index]))")
-                            }
-                        }
-                    }
-                    
-                    if !splitwiseEntries.isEmpty {
-                        Section(header: Text("Splitwise Entries")) {
-                            ForEach(splitwiseEntries) { entry in
-                                Text("Player \(entry.payer + 1) pays Player \(entry.payee + 1): $\(String(format: "%.2f", entry.amount))")
+                    if !secondEntriesList.isEmpty {
+                        Section(header: Text("Second Splitwise Entry")) {
+                            ForEach(secondEntriesList, id: \.payer) { entry in
+                                // Determine the amount owed for each player
+                                let amountOwed = (entry.payer == firstEntry.payer) ? firstEntry.amountPaid : entry.amountOwed;
+
+                                // Construct the text conditionally
+                                let owedText = amountOwed > 0.0 ? " and owes $\(String(format: "%.2f", amountOwed))" : ""
+                                
+                                Text("\(entry.payer) paid $\(String(format: "%.2f", entry.amountPaid))\(owedText)")
                             }
                         }
                     }
@@ -72,51 +79,20 @@ struct ContentView: View {
         }
     }
     
-    func calculateWinnings() {
-        guard let chipRate = Double(chipToDollarRate), chipRate > 0 else {
-            return
-        }
-        
-        let totalBuyIn = players.reduce(0) { $0 + $1.initialBuyIn }
-        let totalMoney = Double(totalBuyIn) / chipRate
-        
-        var finalMoneyPerPlayer: [Double] = []
-        
-        for player in players {
-            let finalChips = player.finalScore
-            finalMoneyPerPlayer.append(Double(finalChips) / chipRate)
-        }
-        
-        let winnings = finalMoneyPerPlayer.map { max($0 - totalMoney / Double(players.count), 0) }
-        results = winnings
-    }
-    
     func calculateSplitwiseEntries() {
-        splitwiseEntries = []
-        let adjustedResults = results.map { $0 - (results.reduce(0, +) / Double(players.count)) }
+        // Find the player with the highest final score
+        guard let specialPlayer = players.max(by: { $0.finalScore < $1.finalScore }) else { return }
         
-        var debts = adjustedResults.enumerated().filter { $0.element < 0 }.sorted { $0.element < $1.element }
-        var credits = adjustedResults.enumerated().filter { $0.element > 0 }.sorted { $0.element > $1.element }
-        
-        while !debts.isEmpty && !credits.isEmpty {
-            let debtIndex = debts[0].offset
-            let creditIndex = credits[0].offset
-            let debtAmount = abs(debts[0].element)
-            let creditAmount = credits[0].element
-            
-            let amountToSettle = min(debtAmount, creditAmount)
-            splitwiseEntries.append(SplitwiseEntry(payer: debtIndex, payee: creditIndex, amount: amountToSettle))
-            
-            debts[0].element += amountToSettle
-            credits[0].element -= amountToSettle
-            
-            if debts[0].element == 0 {
-                debts.remove(at: 0)
-            }
-            
-            if credits[0].element == 0 {
-                credits.remove(at: 0)
-            }
+        // Calculate the first entry
+        let totalFirstEntryPaid = players.reduce(0) { $0 + Double($1.initialBuyIn) / chipToDollarRate }
+        firstEntry = SplitwiseEntry(payer: specialPlayer.name, amountPaid: totalFirstEntryPaid, amountOwed: 0.0)
+
+        // Calculate the second entries
+        secondEntriesList = players.map { player in
+            let amountPaid = Double(player.finalScore) / chipToDollarRate
+            let amountOwed = 0.0
+            return SplitwiseEntry(payer: player.name, amountPaid: amountPaid, amountOwed: amountOwed)
         }
     }
 }
+
