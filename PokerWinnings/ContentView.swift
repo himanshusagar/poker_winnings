@@ -17,10 +17,13 @@ struct SplitwiseEntry: Identifiable {
 struct ContentView: View {
     @AppStorage("chipToDollarRate") private var chipToDollarRate: Double = 400.0 // Dollar value per chip
     @AppStorage("initialBuyIn") private var initialBuyIn: Int = 2000 // Initial buy-in amount
-
-    @State private var players: [Player] = [Player(name: "Player 1", initialBuyIn: 2000, finalScore: 0)]
+    
+    @State private var players: [Player] = []
     @State private var firstEntry: SplitwiseEntry?
     @State private var secondEntriesList: [SplitwiseEntry] = []
+    
+    @State private var isValidationSuccess: Bool = true
+    @State private var validationMessage: String = ""
 
     var body: some View {
         NavigationView {
@@ -60,14 +63,29 @@ struct ContentView: View {
                     }
 
                     Button("Add Player") {
-                        let playerNumber = players.count + 1
-                        players.append(Player(name: "Player \(playerNumber)", initialBuyIn: initialBuyIn, finalScore: 0))
+                        players.append(Player(name: "Player \(players.count + 1)", initialBuyIn: initialBuyIn, finalScore: 0))
+                    }
+
+                    Button("Remove Last Player") {
+                        if !players.isEmpty {
+                            players.removeLast()
+                        }
                     }
                 }
 
                 Section {
                     Button("Calculate Splitwise Entries") {
                         calculateSplitwiseEntries()
+                    }
+                    .alert(isPresented: Binding<Bool>(
+                        get: { !isValidationSuccess },
+                        set: { if !$0 { isValidationSuccess = true } }
+                    )) {
+                        Alert(
+                            title: Text("Validation Error"),
+                            message: Text(validationMessage),
+                            dismissButton: .default(Text("OK"))
+                        )
                     }
                 }
 
@@ -94,11 +112,35 @@ struct ContentView: View {
             .navigationBarItems(trailing: NavigationLink(destination: SettingsView(players: $players)) {
                 Text("Settings")
             })
+            .onAppear {
+                loadSavedPlayers()
+            }
+        }
+    }
+
+    func loadSavedPlayers() {
+        if let savedPlayers = UserDefaults.standard.stringArray(forKey: "savedPlayerNames") {
+            players = savedPlayers.map { Player(name: $0, initialBuyIn: initialBuyIn, finalScore: 0) }
         }
     }
 
     func calculateSplitwiseEntries() {
+        let totalInitialBuyIn = players.reduce(0) { $0 + $1.initialBuyIn }
+        let totalFinalScore = players.reduce(0) { $0 + $1.finalScore }
+
+        if totalInitialBuyIn != totalFinalScore {
+            isValidationSuccess = false
+            validationMessage = "Total Initial Buy-In (\(totalInitialBuyIn)) must equal Total Final Score (\(totalFinalScore))."
+            firstEntry = nil
+            secondEntriesList = []
+            return
+        } else {
+            isValidationSuccess = true
+            validationMessage = ""
+        }
+
         guard let specialPlayer = players.max(by: { $0.finalScore < $1.finalScore }) else { return }
+        
         let totalFirstEntryPaid = players.reduce(0) { $0 + Double($1.initialBuyIn) / chipToDollarRate }
         firstEntry = SplitwiseEntry(payer: specialPlayer.name, amountPaid: totalFirstEntryPaid, amountOwed: 0.0)
 
@@ -114,6 +156,9 @@ struct SettingsView: View {
     @AppStorage("chipToDollarRate") private var chipToDollarRate: Double = 400.0 // Dollar value per chip
     @AppStorage("initialBuyIn") private var initialBuyIn: Int = 2000 // Initial buy-in amount
     @Binding var players: [Player]
+    
+    @State private var savedPlayerNames: [String] = []
+    @State private var newPlayerName: String = ""
 
     var body: some View {
         Form {
@@ -127,9 +172,6 @@ struct SettingsView: View {
                         .keyboardType(.decimalPad)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .padding(.top, 5)
-                        .onChange(of: chipToDollarRate) { newValue in
-                            repopulateInitialBuyIn()
-                        }
                 }
                 .padding(.vertical)
 
@@ -142,20 +184,69 @@ struct SettingsView: View {
                         .keyboardType(.numberPad)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .padding(.top, 5)
-                        .onChange(of: initialBuyIn) { newValue in
-                            repopulateInitialBuyIn()
-                        }
                 }
                 .padding(.vertical)
+
+                Section(header: Text("Saved Players")) {
+                    List {
+                        ForEach(savedPlayerNames.sorted(), id: \.self) { name in
+                            HStack {
+                                Text(name)
+                                Spacer()
+                                Button(action: {
+                                    removePlayer(name: name)
+                                }) {
+                                    Image(systemName: "trash")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .onDelete(perform: removePlayers)
+                    }
+                    
+                    HStack {
+                        TextField("New Player Name", text: $newPlayerName)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                        Button("Add") {
+                            if !newPlayerName.isEmpty {
+                                addSavedPlayer()
+                            }
+                        }
+                        .buttonStyle(BorderlessButtonStyle())
+                    }
+                }
             }
         }
         .navigationTitle("Settings")
-    }
-
-    private func repopulateInitialBuyIn() {
-        for index in players.indices {
-            players[index].initialBuyIn = initialBuyIn
+        .onAppear {
+            loadSavedPlayers()
         }
     }
-}
 
+    private func loadSavedPlayers() {
+        if let savedPlayers = UserDefaults.standard.stringArray(forKey: "savedPlayerNames") {
+            savedPlayerNames = savedPlayers
+        }
+    }
+
+    private func saveSavedPlayers() {
+        UserDefaults.standard.set(savedPlayerNames, forKey: "savedPlayerNames")
+    }
+
+    private func addSavedPlayer() {
+        savedPlayerNames.append(newPlayerName)
+        saveSavedPlayers()
+        newPlayerName = ""
+    }
+
+    private func removePlayer(name: String) {
+        savedPlayerNames.removeAll { $0 == name }
+        saveSavedPlayers()
+    }
+
+    private func removePlayers(at offsets: IndexSet) {
+        savedPlayerNames.remove(atOffsets: offsets)
+        saveSavedPlayers()
+    }
+}
